@@ -25,3 +25,5 @@ release/
 
 # generated
 src/hooks.js
+_pkgtest/
+.build/
