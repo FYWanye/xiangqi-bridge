@@ -118,6 +118,7 @@ const server = createServer(async (req, res) => {
         url: body.url || null,
         side: body.side || 'auto',
         depth: parseInt(body.depth) || 20,
+        movetime: parseInt(body.movetime) || 800,
         headless: !!body.headless,
         pollMs: parseInt(body.pollMs) || 2000,
         analysisTimeout: parseInt(body.analysisTimeout) || 45000,

@@ -33,6 +33,7 @@ export class GameBridge extends EventEmitter {
     this._gameHookInjected = false;
     this._oppHookInjected = false;
     this._stopRequested = false;
+    this._fastEngine = false;  // 是否已启用无重载快速分析路径
   }
 
   log(msg) {
@@ -58,7 +59,8 @@ export class GameBridge extends EventEmitter {
    *   room: 房间号 (join/analyze 时必填)
    *   url: 完整对局 URL (可选, 优先于 room)
    *   side: 'red'|'black' (join 模式可选)
-   *   depth: 引擎分析深度 (默认 20)
+   *   depth: 引擎分析深度 (默认 20；快速路径下为回退深度)
+   *   movetime: 引擎每步思考时间毫秒 (默认 800；值越大棋力越强但越慢)
    *   headless: 是否无头 (默认 false, 显示浏览器窗口)
    *   pollMs: 局面轮询间隔 (默认 2000)
    *   analysisTimeout: 单次分析超时 (默认 45000)
@@ -70,6 +72,7 @@ export class GameBridge extends EventEmitter {
       url: opts.url || null,
       side: opts.side || 'auto',
       depth: opts.depth || 20,
+      movetime: parseInt(opts.movetime) || 800,
       headless: !!opts.headless,
       pollMs: opts.pollMs || 2000,
       analysisTimeout: opts.analysisTimeout || 45000,
@@ -120,7 +123,26 @@ export class GameBridge extends EventEmitter {
       await this.analyzerPage.goto('https://xiangqiai.com/#/', { waitUntil: 'domcontentloaded', timeout: 60000 });
       await this.analyzerPage.waitForTimeout(5000);
       await this._dismissGuides();
-      await this._injectEngineHook();
+
+      // 快速路径：注入引擎捕获脚本，绕开页面 UI 直接驱动 UCI（无重载）
+      const fastCode = readFileSync(join(__dirname, 'analyzer-hook.js'), 'utf8');
+      await this.analyzerPage.evaluate(fastCode);
+      // 触发引擎启动：点击「开始分析」让站点加载 WASM（首次仍需下载引擎）
+      await this.analyzerPage.evaluate(() => {
+        for (const b of document.querySelectorAll('button, [role="button"]')) {
+          const t = (b.textContent || '').trim();
+          if (t === '开始分析' || t === 'Start analysis') { b.click(); return; }
+        }
+      });
+      // 等待引擎 ready
+      const ready = await this.analyzerPage.evaluate(() => window.__XQ_ENGINE__?.waitReady(40000) || false);
+      if (ready && await this._probeFastEngine()) {
+        this._fastEngine = true;
+        this.log('[引擎] ✓ 已启用无重载快速分析路径 (movetime=' + this.opts.movetime + 'ms)');
+      } else {
+        this._fastEngine = false;
+        this.log('[引擎] 快速路径不可用，回退到整页加载分析');
+      }
 
       this.running = true;
       this.log('[启动] 初始化完成!');
@@ -334,6 +356,36 @@ export class GameBridge extends EventEmitter {
   async analyzePosition(fen) {
     this.log(`[分析] 发送局面到分析引擎...`);
     this.emit('fen', { fen });
+
+    // 快速路径：引擎常驻，直接发 UCI，无整页重载
+    if (this._fastEngine) {
+      try {
+        const t0 = Date.now();
+        const res = await this.analyzerPage.evaluate(
+          (f, mt, dp) => window.__XQ_ENGINE__?.analyze(f, { movetime: mt, depth: dp }) || null,
+          fen, this.opts.movetime, this.opts.depth
+        );
+        const elapsed = Date.now() - t0;
+        if (res && res.bestMove) {
+          const score = res.mate != null ? `绝杀${res.mate}` : (res.score != null ? res.score : '?');
+          this.log(`[分析] ✓ ${res.bestMove} (${score} 分, D${res.depth}, ${elapsed}ms)`);
+          const result = {
+            bestMove: res.bestMove,
+            cnMove: null,
+            score: res.mate != null ? 99999 : res.score,
+            scoreSide: fen.endsWith(' b') ? '黑' : '红',
+            depth: res.depth,
+            pv: res.pv || [],
+          };
+          this.emit('analysis', result);
+          return result;
+        }
+        this.log(`[分析] 快速路径未返回结果 (${elapsed}ms)，回退整页加载`);
+      } catch (e) {
+        this.log('[分析] 快速路径异常: ' + e.message + '，回退整页加载');
+      }
+    }
+
     try {
       await this.analyzerPage.evaluate(() => window.__XQ_ANALYZER_HOOK__?.reset());
 
@@ -369,6 +421,18 @@ export class GameBridge extends EventEmitter {
     } catch (e) {
       this.log('[分析] 错误: ' + e.message);
       return null;
+    }
+  }
+
+  // ---- 探测快速分析路径是否可用（用标准开局试跑一步）----
+  async _probeFastEngine() {
+    try {
+      const res = await this.analyzerPage.evaluate(
+        () => window.__XQ_ENGINE__?.analyze('rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w', { movetime: 300 }) || null
+      );
+      return !!(res && res.bestMove);
+    } catch {
+      return false;
     }
   }
 

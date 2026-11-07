@@ -46,8 +46,13 @@
       </div>
 
       <div class="field">
-        <label for="depthInput">分析深度</label>
+        <label for="depthInput">分析深度（回退用）</label>
         <input class="input" id="depthInput" type="number" min="10" max="30" value="20">
+      </div>
+
+      <div class="field">
+        <label for="movetimeInput">思考时间（毫秒，越小越快）</label>
+        <input class="input" id="movetimeInput" type="number" min="100" max="10000" step="100" value="800">
       </div>
 
       <div class="field field-headless">

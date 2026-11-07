@@ -13,6 +13,7 @@ const els = {
   roomField: $('#roomField'),
   roomInput: $('#roomInput'),
   depthInput: $('#depthInput'),
+  movetimeInput: $('#movetimeInput'),
   headlessCheck: $('#headlessCheck'),
   startBtn: $('#startBtn'),
   stopBtn: $('#stopBtn'),
@@ -93,6 +94,7 @@ els.startBtn.addEventListener('click', async () => {
   const payload = {
     mode: currentMode,
     depth: parseInt(els.depthInput.value) || 20,
+    movetime: parseInt(els.movetimeInput.value) || 800,
     headless: els.headlessCheck.checked,
   };
   if (currentMode !== 'selfplay') {
