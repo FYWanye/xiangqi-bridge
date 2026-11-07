@@ -7,13 +7,49 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import { cnMoveToUciFull, validateUciMove, samePosition, normalizeFen } from './fen-utils.js';
+// 注入脚本以内联字符串方式引入 —— 打包成单文件 exe 后磁盘上没有 .js 可读
+import { GAME_HOOK_SRC, ANALYZER_HOOK_SRC } from './hooks.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+/**
+ * 加载 playwright。
+ * 源码运行时走正常 import；打包成 exe 后 playwright 放在 exe 同级的
+ * runtime/node_modules 下，需要按该路径解析。
+ */
+function loadPlaywright() {
+  // 1) 先尝试常规解析（源码运行 / node_modules 存在）
+  try {
+    const req = createRequire(import.meta.url);
+    return req('playwright');
+  } catch (e) {
+    // 2) 打包后：从 exe 同级 runtime/node_modules 加载
+    const baseDir = (() => {
+      try {
+        if (process.execPath && !/node(\.exe)?$/i.test(process.execPath)) return dirname(process.execPath);
+      } catch {}
+      return process.cwd();
+    })();
+    const candidates = [
+      join(baseDir, 'runtime', 'node_modules', 'playwright'),
+      join(baseDir, 'runtime', 'node_modules', 'playwright-core'),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) {
+        try {
+          const req2 = createRequire(join(p, 'package.json'));
+          return req2('playwright');
+        } catch {}
+      }
+    }
+    throw new Error('无法加载 playwright（已查找: ' + candidates.join(', ') + '）原始错误: ' + e.message);
+  }
+}
+
+const { chromium } = loadPlaywright();
 
 export class GameBridge extends EventEmitter {
   constructor() {
@@ -65,6 +101,39 @@ export class GameBridge extends EventEmitter {
    *   pollMs: 局面轮询间隔 (默认 2000)
    *   analysisTimeout: 单次分析超时 (默认 45000)
    */
+  /**
+   * 启动浏览器。
+   * 优先级: 系统 Chrome → 系统 Edge → playwright 自带 Chromium。
+   * 这样打包成 exe 时可以不带 90MB 的 Chromium，用户机器上有浏览器即可。
+   */
+  async _launchBrowser() {
+    const launchOpts = {
+      headless: this.opts.headless,
+      slowMo: this.opts.headless ? 0 : 80,
+    };
+
+    const candidates = [
+      { channel: 'chrome', label: '系统 Chrome' },
+      { channel: 'msedge', label: '系统 Edge' },
+      { channel: null, label: 'playwright Chromium' },
+    ];
+
+    let lastErr = null;
+    for (const c of candidates) {
+      try {
+        const opts = c.channel ? { ...launchOpts, channel: c.channel } : launchOpts;
+        const b = await chromium.launch(opts);
+        this.log(`[启动] 使用浏览器: ${c.label}`);
+        return b;
+      } catch (e) {
+        lastErr = e;
+        this.log(`[启动] ${c.label} 不可用`);
+      }
+    }
+    throw new Error('没有可用的浏览器，请安装 Chrome 或 Edge。原始错误: ' +
+      (lastErr && lastErr.message ? String(lastErr.message).split('\n')[0] : '未知'));
+  }
+
   async start(opts = {}) {
     this.opts = {
       mode: opts.mode || 'join',
@@ -94,10 +163,7 @@ export class GameBridge extends EventEmitter {
 
     try {
       this.log('[启动] 打开浏览器...');
-      this.browser = await chromium.launch({
-        headless: this.opts.headless,
-        slowMo: this.opts.headless ? 0 : 80,
-      });
+      this.browser = await this._launchBrowser();
 
       if (this.opts.mode === 'selfplay') {
         await this._startSelfPlay();
@@ -125,7 +191,7 @@ export class GameBridge extends EventEmitter {
       await this._dismissGuides();
 
       // 快速路径：注入引擎捕获脚本，绕开页面 UI 直接驱动 UCI（无重载）
-      const fastCode = readFileSync(join(__dirname, 'analyzer-hook.js'), 'utf8');
+      const fastCode = ANALYZER_HOOK_SRC;
       await this.analyzerPage.evaluate(fastCode);
       // 触发引擎启动：点击「开始分析」让站点加载 WASM（首次仍需下载引擎）
       await this.analyzerPage.evaluate(() => {
@@ -271,7 +337,7 @@ export class GameBridge extends EventEmitter {
   // ---- 注入游戏钩子 (读局面 + 落子) ----
   async _injectGameHook() {
     if (this._gameHookInjected) return;
-    const hookCode = readFileSync(join(__dirname, 'game-hook.js'), 'utf8');
+    const hookCode = GAME_HOOK_SRC;
     await this.gamePage.evaluate(hookCode);
     this._gameHookInjected = true;
     this.log('[游戏钩子] 已注入');
@@ -658,7 +724,7 @@ export class GameBridge extends EventEmitter {
     // 黑方页首次注入钩子
     if (aiOpponent && !this._oppHookInjected) {
       try {
-        await this.opponentPage.evaluate(readFileSync(join(__dirname, 'game-hook.js'), 'utf8'));
+        await this.opponentPage.evaluate(GAME_HOOK_SRC);
         this._oppHookInjected = true;
       } catch {}
     }

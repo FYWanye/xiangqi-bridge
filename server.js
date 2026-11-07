@@ -13,9 +13,25 @@ import { readFile } from 'node:fs/promises';
 import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { GameBridge } from './src/bridge.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+// 解析程序所在目录：
+//  - 源码运行 (ESM): 用 import.meta.url
+//  - 打包后 exe (SEA, CJS): 用 process.execPath 所在目录（exe 同级的 public/ 与 runtime/）
+function resolveBaseDir() {
+  // SEA 打包后 process.execPath 就是 exe 本身（不是 node.exe）
+  if (typeof process !== 'undefined' && process.execPath && !/node(\.exe)?$/i.test(process.execPath)) {
+    return dirname(process.execPath);
+  }
+  try {
+    return dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return process.cwd();
+  }
+}
+
+const __dirname = resolveBaseDir();
 const PUBLIC_DIR = join(__dirname, 'public');
 
 // ---- 解析命令行 ----

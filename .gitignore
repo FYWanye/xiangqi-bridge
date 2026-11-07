@@ -22,3 +22,6 @@ dist/
 build/
 release/
 *.err
+
+# generated
+src/hooks.js

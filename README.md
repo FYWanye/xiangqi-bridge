@@ -4,17 +4,39 @@
 
 **v2.0 起提供一个本地 Web 控制台（GUI）**：一条命令启动，浏览器里点按钮即可控制对弈、查看实时棋盘与引擎日志，不再需要记命令行参数。
 
-> **已验证：AI 对 AI 连续对弈 41 步无中断。**
+**v2.2 提供免安装 exe**：`dist\XiangqiBridge.exe` 双击即用，无需装 Node.js。
 
-## 快速开始
+> **已验证：打包后的 exe 实测连续对弈 25+ 步，每步分析约 870ms，无错误。**
+
+## 方式一：直接用 exe（推荐普通用户）
+
+```bash
+npm install && npm run build:exe     # 开发者构建一次
+```
+
+产物在 `dist/`：
+
+```
+dist/
+├── XiangqiBridge.exe      # 双击运行（约 89 MB，已内嵌 Node 运行时）
+├── public/                # Web GUI 静态资源（必须与 exe 同目录）
+├── runtime/node_modules/  # playwright（必须与 exe 同目录）
+└── 使用说明.txt
+```
+
+双击 `XiangqiBridge.exe` → 自动打开浏览器 → 在界面里选模式点「启动桥接」。
+
+- 程序会占用一个命令行窗口，**关闭窗口即退出程序**
+- 换端口：命令行执行 `XiangqiBridge.exe --port 3090 --no-open`
+- **浏览器复用**：优先调用系统已装的 Chrome → Edge → playwright Chromium，因此 exe 不必附带 90MB 浏览器
+
+> 分发时请把 `dist/` 整个目录打包成 zip，只发 exe 会因缺少 `public/` 和 `runtime/` 而无法运行。
+
+## 方式二：从源码运行（开发者）
 
 ```bash
 cd E:\xiangqi
-
-# 安装依赖（首次）
 npm install
-
-# 启动 GUI 控制台（会自动打开浏览器）
 npm start
 ```
 
@@ -158,6 +180,35 @@ npm run test:e2e      # 真实站点回归 (需要网络)
 | 分析面板残留 | 同 URL 的 hash 导航会滞留旧分析块 → `?t=<timestamp>` 刷新 + 归属校验双保险 |
 | 引导弹窗 | xiangqiai.com 有 4 步引导遮罩，**每次导航后**都要点「跳过引导」 |
 | 点击落空 | 棋盘可能超出视口 → 落子前 `scrollIntoView`，并校验点击坐标在视口内 |
+
+## exe 打包原理
+
+用 Node 24 的 **SEA（Single Executable Application）** 把 bundle 注入 node 二进制：
+
+```
+server.js + src/*.js
+      │  esbuild 打成单个 CJS（70 KB）
+      ▼
+   app.cjs ──► node --experimental-sea-config ──► sea-prep.blob
+                                                      │
+node.exe ──► 复制 ──► XiangqiBridge.exe ──► postject 注入 blob
+```
+
+三个关键设计：
+
+| 难点 | 处理方式 |
+|------|----------|
+| SEA 只支持 CJS 入口 | esbuild `format: 'cjs'`，并把 ESM 的 `import.meta.url` 换成运行时判断 |
+| hook 脚本靠 `readFileSync` 加载，打包后磁盘没有 | `scripts/gen-hooks.mjs` 把两个 hook 转成字符串常量内联进 bundle |
+| playwright 含原生文件无法内嵌 | esbuild `external`，运行时从 exe 同级 `runtime/node_modules` 解析 |
+
+浏览器策略：优先系统 Chrome → Edge → playwright Chromium，所以 exe 是 89MB 而非 180MB。
+
+重新打包：
+
+```bash
+npm run build:exe
+```
 
 ## 站点协议摘要
 
