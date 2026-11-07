@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>象棋 AI 桥接控制台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-name">象棋 AI 桥接控制台</span>
+    </div>
+    <div class="status-pill" id="statusPill" data-state="stopped">
+      <span class="status-dot"></span>
+      <span id="statusText">未启动</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <!-- 配置卡片 -->
+  <section class="card config-card">
+    <div class="card-head">
+      <h2>配置</h2>
+      <p class="card-sub">选择对弈方式，然后启动</p>
+    </div>
+
+    <div class="config-grid">
+      <div class="field field-mode">
+        <label>对弈模式</label>
+        <div class="seg" id="modeSeg">
+          <button class="seg-btn active" data-mode="selfplay">AI 自弈</button>
+          <button class="seg-btn" data-mode="join">加入房间</button>
+          <button class="seg-btn" data-mode="analyze">只分析</button>
+        </div>
+      </div>
+
+      <div class="field" id="roomField" style="display:none">
+        <label for="roomInput">房间号 / URL</label>
+        <input class="input" id="roomInput" placeholder="房间号如 jp36，或完整对局 URL">
+      </div>
+
+      <div class="field">
+        <label for="depthInput">分析深度</label>
+        <input class="input" id="depthInput" type="number" min="10" max="30" value="20">
+      </div>
+
+      <div class="field field-headless">
+        <label class="check">
+          <input type="checkbox" id="headlessCheck" checked>
+          <span>无头模式（隐藏浏览器窗口）</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="startBtn">启动桥接</button>
+      <button class="btn btn-secondary" id="stopBtn" disabled>停止</button>
+      <button class="btn btn-secondary" id="analyzeBtn" disabled>分析一步</button>
+    </div>
+  </section>
+
+  <!-- 棋盘 + 信息 -->
+  <section class="card board-card">
+    <div class="card-head">
+      <h2>当前局面</h2>
+      <p class="card-sub" id="fenText">尚未启动。启动后这里会显示实时 FEN。</p>
+    </div>
+    <div class="board-wrap">
+      <div class="board-frame" id="boardFrame">
+        <div class="board-empty">启动后自动显示棋盘</div>
+      </div>
+      <aside class="board-info">
+        <div class="info-row"><span class="info-label">回合</span><span class="info-value" id="turnText">—</span></div>
+        <div class="info-row"><span class="info-label">走子数</span><span class="info-value mono" id="moveCount">0</span></div>
+        <div class="info-row"><span class="info-label">推荐着法</span><span class="info-value mono" id="bestMove">—</span></div>
+        <div class="info-row"><span class="info-label">引擎评分</span><span class="info-value mono" id="scoreText">—</span></div>
+        <div class="info-row"><span class="info-label">对局地址</span><span class="info-value mono small" id="gameUrl">—</span></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 日志 -->
+  <section class="card log-card">
+    <div class="card-head log-head">
+      <h2>运行日志</h2>
+      <button class="btn btn-ghost" id="clearLogBtn">清空</button>
+    </div>
+    <div class="log-console" id="logConsole" aria-live="polite"></div>
+  </section>
+</main>
+
+<footer class="footer">
+  <p>仅供学习研究，请遵守目标网站使用条款。</p>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

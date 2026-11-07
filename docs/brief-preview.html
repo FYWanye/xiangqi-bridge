@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>象棋 AI 桥接控制台 · Design Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FFFFFF;
+    --surface: #F8FAFC;
+    --text: #0F172A;
+    --text-2: #64748B;
+    --accent: #3B82F6;
+    --accent-hover: #2563EB;
+    --border: rgba(15, 23, 42, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    font-weight: 400;
+    font-size: 1rem;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 40px 72px;
+  }
+  h1 { font-weight: 600; font-size: clamp(2rem, 5vw, 3.5rem); margin: 24px 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--text-2); margin-bottom: 72px; }
+  h2 {
+    font-size: 1.125rem; font-weight: 600;
+    margin: 0 0 24px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-2);
+  }
+  section { margin-bottom: 72px; }
+
+  /* 1. Color swatches */
+  .swatches { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+  .swatch { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+  .swatch .chip { height: 90px; }
+  .swatch .meta { padding: 12px 14px; }
+  .swatch .role { font-weight: 600; font-size: 0.875rem; }
+  .swatch .hex { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-2); }
+
+  /* 2. Typography */
+  .specimen { border: 1px solid var(--border); border-radius: 12px; padding: 24px 28px; background: var(--surface); margin-bottom: 16px; }
+  .specimen .label { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-2); margin-bottom: 8px; }
+  .spec-display { font-weight: 600; font-size: clamp(2rem, 5vw, 3.5rem); letter-spacing: -0.02em; }
+  .spec-body { font-weight: 400; font-size: 1rem; }
+  .spec-mono { font-family: 'JetBrains Mono', monospace; font-weight: 400; font-size: 0.875rem; }
+
+  /* 3. Spacing ruler */
+  .ruler-row { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+  .ruler-row .tag { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-2); width: 160px; flex-shrink: 0; }
+  .ruler-bar { height: 14px; background: var(--accent); border-radius: 4px; }
+  .ruler-row .val { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-2); width: 60px; flex-shrink: 0; }
+
+  /* 4. Components */
+  .comp-row { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: inherit; font-size: 0.875rem; font-weight: 600;
+    padding: 10px 20px; border-radius: 6px; cursor: pointer; border: 1px solid transparent;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 24px; width: 260px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 1rem; font-weight: 600; }
+  .card p { margin: 0; color: var(--text-2); font-size: 0.875rem; }
+  .input {
+    font-family: inherit; font-size: 0.875rem; color: var(--text);
+    background: transparent; border: none; border-bottom: 1px solid var(--border);
+    padding: 8px 4px; width: 260px; outline: none;
+  }
+  .input:focus { border-bottom-color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>象棋 AI 桥接控制台</h1>
+  <p class="sub">Design System Preview — professional_minimal · light_clean · inter</p>
+
+  <section>
+    <h2>1 · Color Palette</h2>
+    <div class="swatches">
+      <div class="swatch"><div class="chip" style="background:#FFFFFF"></div><div class="meta"><div class="role">Background</div><div class="hex">#FFFFFF</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#F8FAFC"></div><div class="meta"><div class="role">Surface</div><div class="hex">#F8FAFC</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#0F172A"></div><div class="meta"><div class="role">Text primary</div><div class="hex">#0F172A</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#64748B"></div><div class="meta"><div class="role">Text secondary</div><div class="hex">#64748B</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#3B82F6"></div><div class="meta"><div class="role">Accent</div><div class="hex">#3B82F6</div></div></div>
+      <div class="swatch"><div class="chip" style="background:#2563EB"></div><div class="meta"><div class="role">Accent hover</div><div class="hex">#2563EB</div></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2 · Typography</h2>
+    <div class="specimen">
+      <div class="label">DISPLAY · Inter 600 · clamp(2rem,5vw,3.5rem)</div>
+      <div class="spec-display">象棋 AI 桥接控制台</div>
+    </div>
+    <div class="specimen">
+      <div class="label">BODY · Inter 400 · 1rem/1.6</div>
+      <div class="spec-body">The quick brown fox jumps over the lazy dog. 自动读取棋谱，交给引擎分析，再回写落子。</div>
+    </div>
+    <div class="specimen">
+      <div class="label">MONO · JetBrains Mono 400 · 0.875rem</div>
+      <div class="spec-mono">rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>3 · Spacing</h2>
+    <div class="ruler-row"><span class="tag">section spacing</span><span class="ruler-bar" style="width:72px"></span><span class="val">72px</span></div>
+    <div class="ruler-row"><span class="tag">content padding (v)</span><span class="ruler-bar" style="width:24px"></span><span class="val">24px</span></div>
+    <div class="ruler-row"><span class="tag">content padding (h)</span><span class="ruler-bar" style="width:40px"></span><span class="val">40px</span></div>
+  </section>
+
+  <section>
+    <h2>4 · Components</h2>
+    <div class="comp-row">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <button class="btn btn-primary">启动对弈</button>
+        <button class="btn btn-secondary">停止</button>
+      </div>
+      <div class="card">
+        <h3>当前局面</h3>
+        <p>等待启动。启动后这里会显示 FEN 与实时推荐着法。</p>
+      </div>
+      <div>
+        <label style="display:block;font-size:0.75rem;color:var(--text-2);margin-bottom:4px">房间号</label>
+        <input class="input" placeholder="如 jp36" value="">
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>
