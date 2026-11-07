@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { cnMoveToUciFull } from './fen-utils.js';
+import { cnMoveToUciFull, validateUciMove, samePosition, normalizeFen } from './fen-utils.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -359,31 +359,43 @@ export class GameBridge extends EventEmitter {
 
     // 快速路径：引擎常驻，直接发 UCI，无整页重载
     if (this._fastEngine) {
+      let fastUsable = false;
       try {
         const t0 = Date.now();
+        // 注意: page.evaluate 只接受一个参数, 多参数须打包成对象
         const res = await this.analyzerPage.evaluate(
-          (f, mt, dp) => window.__XQ_ENGINE__?.analyze(f, { movetime: mt, depth: dp }) || null,
-          fen, this.opts.movetime, this.opts.depth
+          (arg) => window.__XQ_ENGINE__?.analyze(arg.fen, { movetime: arg.movetime, depth: arg.depth }) || null,
+          { fen, movetime: this.opts.movetime, depth: this.opts.depth }
         );
         const elapsed = Date.now() - t0;
+
         if (res && res.bestMove) {
-          const score = res.mate != null ? `绝杀${res.mate}` : (res.score != null ? res.score : '?');
-          this.log(`[分析] ✓ ${res.bestMove} (${score} 分, D${res.depth}, ${elapsed}ms)`);
-          const result = {
-            bestMove: res.bestMove,
-            cnMove: null,
-            score: res.mate != null ? 99999 : res.score,
-            scoreSide: fen.endsWith(' b') ? '黑' : '红',
-            depth: res.depth,
-            pv: res.pv || [],
-          };
-          this.emit('analysis', result);
-          return result;
+          // 校验 bestmove 在当前局面成立（防止引擎串台 / 旧搜索残留）
+          const verdict = validateUciMove(fen, res.bestMove);
+          if (!verdict.ok) {
+            this.log(`[分析] 快速路径着法非法 (${verdict.reason})，回退整页加载`);
+          } else {
+            fastUsable = true;
+            const score = res.mate != null ? `绝杀${res.mate}` : (res.score != null ? res.score : '?');
+            this.log(`[分析] ✓ ${res.bestMove} (${score} 分, D${res.depth}, ${elapsed}ms)`);
+            const result = {
+              bestMove: res.bestMove,
+              cnMove: null,
+              score: res.mate != null ? 99999 : res.score,
+              scoreSide: fen.endsWith(' b') ? '黑' : '红',
+              depth: res.depth,
+              pv: res.pv || [],
+            };
+            this.emit('analysis', result);
+            return result;
+          }
+        } else {
+          this.log(`[分析] 快速路径未返回结果 (${elapsed}ms)，回退整页加载`);
         }
-        this.log(`[分析] 快速路径未返回结果 (${elapsed}ms)，回退整页加载`);
       } catch (e) {
         this.log('[分析] 快速路径异常: ' + e.message + '，回退整页加载');
       }
+      if (!fastUsable) this._fastEngine = false; // 快速路径不可用则降级，避免每步都先失败一次
     }
 
     try {
@@ -393,6 +405,19 @@ export class GameBridge extends EventEmitter {
       await this.analyzerPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await this.analyzerPage.waitForTimeout(4000);
       await this._dismissGuides();
+
+      // 关键校验 1: 页面实际加载的局面必须就是请求的局面
+      const shownFen = await this._readBoardFenFromAnalyzer();
+      if (!samePosition(shownFen, fen)) {
+        this.log(`[分析] ✗ 分析页局面不一致！请求=${normalizeFen(fen)} 实际=${normalizeFen(shownFen)}`);
+        // 再等一会儿重读一次（页面可能仍在渲染）
+        await this.analyzerPage.waitForTimeout(1500);
+        const retryFen = await this._readBoardFenFromAnalyzer();
+        if (!samePosition(retryFen, fen)) {
+          this.log(`[分析] ✗ 局面校验失败 (${normalizeFen(retryFen)})，放弃本次分析`);
+          return null;
+        }
+      }
 
       let clicked = null;
       for (let attempt = 0; attempt < 15 && !clicked; attempt++) {
@@ -409,6 +434,7 @@ export class GameBridge extends EventEmitter {
       await this.analyzerPage.waitForTimeout(1000);
 
       this.log('[分析] 等待分析结果...');
+      // 记录点击前的块数作为基线；只有「新增块」才可能是本局面的分析
       const result = await this._waitForAnalysisResult(fen);
 
       if (result && (result.bestMove || result.cnMove)) {
@@ -420,6 +446,22 @@ export class GameBridge extends EventEmitter {
       return null;
     } catch (e) {
       this.log('[分析] 错误: ' + e.message);
+      return null;
+    }
+  }
+
+  /** 从分析页棋盘读出当前显示的局面 FEN（用于一致性校验） */
+  async _readBoardFenFromAnalyzer() {
+    try {
+      return await this.analyzerPage.evaluate(() => {
+        // 站点把当前局面的 FEN 放在 hash 中；优先读 hash
+        try {
+          const h = decodeURIComponent((location.hash || '').replace(/^#\/?/, ''));
+          if (/^[rnbakcpRNBAKCP1-9]{1,9}(\/[rnbakcpRNBAKCP1-9]{1,9}){9}/.test(h.trim())) return h.trim();
+        } catch {}
+        return null;
+      });
+    } catch {
       return null;
     }
   }
@@ -436,85 +478,71 @@ export class GameBridge extends EventEmitter {
     }
   }
 
+  /**
+   * 等待并解析分析面板结果。
+   *
+   * 面板会累积历史分析块（新块在最前），且整页刷新后仍可能残留，
+   * 所以只靠"块数变化"不足以保证是本局面的分析。这里用三重防线：
+   *   1) PV 首着的走子方必须 == 当前 FEN 的走棋方（black→黑方棋子）
+   *   2) PV 首着起点必须真的站着该方棋子（validateUciMove 归属/占位校验）
+   *   3) 中文着法必须能转换回 UCI（保证可落子）
+   * 任一不满足就丢弃，继续等待，绝不把别的局面的着法用出去。
+   */
   async _waitForAnalysisResult(fen) {
     const timeout = this.opts.analysisTimeout;
     const startTime = Date.now();
-
-    let boardMap = null;
-    if (fen) {
-      boardMap = {};
-      const rows = fen.split(' ')[0].split('/');
-      for (let i = 0; i < rows.length && i < 10; i++) {
-        const row = 9 - i;
-        let col = 0;
-        for (const ch of rows[i]) {
-          if (ch >= '1' && ch <= '9') col += parseInt(ch);
-          else { (boardMap[ch] = boardMap[ch] || []).push([row, col]); col++; }
-        }
-      }
-    }
+    const turn = fen && fen.trim().split(/\s+/)[1] === 'b' ? 'b' : 'w';
+    const isRedTurn = turn === 'w';
 
     while (Date.now() - startTime < timeout) {
       if (this._stopRequested) return null;
+
       const scan = await this.analyzerPage.evaluate(() => {
         const thinkEl = document.querySelector('.thinking-panel, [class*="thinking-panel"]');
         const text = thinkEl ? thinkEl.innerText : '';
         const blocks = text.split(/(?=[红黑]分\s*[+-]?\d)/).filter(b => /[红黑]分\s*[+-]?\d/.test(b));
-        return { count: blocks.length, first: blocks[0] || null };
+        return { count: blocks.length, blocks: blocks.slice(0, 3) };
       });
 
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      if (elapsed % 5 === 0) {
-        this.log(`[分析] ${elapsed}s: 面板块数=${scan.count}`);
-      }
+      if (elapsed % 5 === 0) this.log(`[分析] ${elapsed}s: 面板块数=${scan.count}`);
 
-      if (scan.count > 0 && scan.first) {
-        const latest = scan.first;
-        const scoreMatch = latest.match(/([红黑])分\s*([+-]?\d+(?:\.\d+)?)/);
-        const depthMatch = latest.match(/\bD(\d+)\b/);
-        const pvMatch = latest.match(/[\d.]+[sm]\s*\n\s*\d+[KM]?\s*\n\s*([\u4e00-\u9fff\uFF11-\uFF19][\u4e00-\u9fff\uFF11-\uFF191-9][平进退=+\-][\u4e00-\u9fff\uFF11-\uFF191-9])/)
-          || latest.match(/([\u4e00-\u9fff\uFF11-\uFF19][\u4e00-\u9fff\uFF11-\uFF191-9][平进退=+\-][\u4e00-\u9fff\uFF11-\uFF191-9])/);
-        const uciMatch = latest.match(/\b([a-i][0-9][a-i][0-9])\b/);
+      for (const block of scan.blocks) {
+        const scoreMatch = block.match(/([红黑])分\s*([+-]?\d+(?:\.\d+)?)/);
+        const depthMatch = block.match(/\bD(\d+)\b/);
+        if (!scoreMatch || !depthMatch) continue;
+        const depth = parseInt(depthMatch[1], 10);
+        if (depth < 10) continue; // 太浅，继续等更深的
 
-        const result = {
-          bestMove: uciMatch ? uciMatch[1] : null,
-          cnMove: pvMatch ? (pvMatch[1] || pvMatch[0]) : null,
-          score: scoreMatch ? parseFloat(scoreMatch[2]) : null,
-          scoreSide: scoreMatch ? scoreMatch[1] : null,
-          depth: depthMatch ? parseInt(depthMatch[1]) : null
-        };
+        // 提取 PV 首着（中文着法）
+        const pvMatch = block.match(/[\d.]+[sm]\s*\n\s*\d+[KM]?\s*\n\s*([\u4e00-\u9fff\uFF11-\uFF19][\u4e00-\u9fff\uFF11-\uFF191-9][平进退=+\-][\u4e00-\u9fff\uFF11-\uFF191-9])/)
+          || block.match(/([\u4e00-\u9fff\uFF11-\uFF19][\u4e00-\u9fff\uFF11-\uFF191-9][平进退=+\-][\u4e00-\u9fff\uFF11-\uFF191-9])/);
+        const cnMove = pvMatch ? (pvMatch[1] || pvMatch[0]) : null;
+        if (!cnMove) continue;
 
-        if (result.depth === null || result.depth < 10 || result.score === null) {
-          await this.analyzerPage.waitForTimeout(1000);
+        // 转换为 UCI（这一步同时用局面做了「棋子是否真在该列」的搜索校验）
+        const uci = cnMoveToUciFull(fen.split(' ')[0], cnMove, isRedTurn);
+        if (!uci) {
+          // 中文着法无法在当前局面成立 → 一定是别的局面的残留分析
           continue;
         }
 
-        if (boardMap && result.cnMove) {
-          const mv = result.cnMove.replace(/[\uFF11-\uFF19]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
-          const pieceChar = mv[0];
-          const isRedPos = !fen.endsWith(' b');
-          const cnToFen = {
-            '炮': isRedPos ? 'C' : 'c', '車': isRedPos ? 'R' : 'r', '车': isRedPos ? 'R' : 'r',
-            '马': isRedPos ? 'N' : 'n', '馬': isRedPos ? 'N' : 'n',
-            '相': isRedPos ? 'B' : 'b', '象': isRedPos ? 'b' : 'B',
-            '仕': isRedPos ? 'A' : 'a', '士': isRedPos ? 'A' : 'a',
-            '兵': isRedPos ? 'P' : 'p', '卒': isRedPos ? 'p' : 'P',
-            '帅': 'K', '帥': 'K', '将': 'k', '將': 'k'
-          };
-          const fenChar = cnToFen[pieceChar] || pieceChar;
-          const positions = boardMap[fenChar] || [];
-          if (positions.length === 0) { await this.analyzerPage.waitForTimeout(1000); continue; }
-          const redFiles = { '一': 8, '二': 7, '三': 6, '四': 5, '五': 4, '六': 3, '七': 2, '八': 1, '九': 0 };
-          const blackFiles = { '1': 0, '2': 1, '3': 2, '4': 3, '5': 4, '6': 5, '7': 6, '8': 7, '9': 8 };
-          const fileMap = isRedPos ? redFiles : blackFiles;
-          const fromCol = fileMap[mv[1]];
-          if (fromCol !== undefined && !positions.some(([, c]) => c === fromCol)) {
-            await this.analyzerPage.waitForTimeout(1000);
-            continue;
-          }
+        // 归属校验：起点必须是当前走棋方的棋子，终点不能是己方子
+        const check = validateUciMove(fen, uci);
+        if (!check.ok) {
+          this.log(`[分析] 丢弃疑似旧局面着法 ${cnMove}→${uci} (${check.reason})`);
+          continue;
         }
-        return result;
+
+        return {
+          bestMove: uci,
+          cnMove,
+          score: parseFloat(scoreMatch[2]),
+          scoreSide: scoreMatch[1],
+          depth,
+        };
       }
+
       await this.analyzerPage.waitForTimeout(1000);
     }
     return null;
@@ -587,6 +615,22 @@ export class GameBridge extends EventEmitter {
       if (uciMove) this.log(`[分析] "${analysis.cnMove}" → UCI: ${uciMove}`);
     }
     if (!uciMove) return false;
+
+    // 落子前最后一道防线:
+    //  a) 重新读一次局面，确认分析期间棋盘没被改动
+    //  b) 用最新局面校验着法的归属合法性
+    const fenNow = await page.evaluate(() => window.__XQ_BRIDGE__?.getCurrentFen());
+    if (!fenNow || !samePosition(fenNow, fen)) {
+      this.log(`[落子] ✗ 局面在分析期间已变化，放弃本次着法`);
+      this.log(`   分析时=${normalizeFen(fen)}`);
+      this.log(`   当前  =${normalizeFen(fenNow)}`);
+      return false;
+    }
+    const verdict = validateUciMove(fenNow, uciMove);
+    if (!verdict.ok) {
+      this.log(`[落子] ✗ 着法非法 (${verdict.reason})，拒绝执行 ${uciMove}`);
+      return false;
+    }
 
     const cols = 'abcdefghi';
     const fc = cols.indexOf(uciMove[0]), fr = parseInt(uciMove[1]);

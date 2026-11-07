@@ -120,6 +120,11 @@ if (window.__XQ_ENGINE__) {
 
     /**
      * 分析一个局面（快速路径，无重载）
+     *
+     * 可靠性保证：每次分析前先 `stop` 冲刷旧搜索，并核对 t0 之后收到的
+     * info/bestmove 都属于本次 gen；解析器只在 gen 匹配时生效，
+     * 从而不会把上一步的 bestmove 当成当前局面的结果。
+     *
      * @param {string} fen
      * @param {{movetime?:number, depth?:number}} opts
      * @returns {Promise<{bestMove,score,mate,depth,pv}|null>}
@@ -129,7 +134,7 @@ if (window.__XQ_ENGINE__) {
       const gen = ++this._gen;
 
       return new Promise((resolve) => {
-        const budget = (movetime > 0 ? movetime : Math.max(2000, depth * 150)) + 10000;
+        const budget = (movetime > 0 ? movetime : Math.max(2000, (depth || 20) * 150)) + 15000;
         const timer = setTimeout(() => {
           if (this.pending && this.pending.gen === gen) {
             this.pending = null;
@@ -137,8 +142,14 @@ if (window.__XQ_ENGINE__) {
           }
         }, budget);
 
-        // 先 stop 冲刷掉可能仍在进行的旧搜索，再发新局面
+        // 1) 先 stop 冲刷掉可能仍在进行的旧搜索，并让旧 pending 失效
+        if (this.pending) {
+          try { this.pending.resolve(null); } catch {}
+          this.pending = null;
+        }
         this.send('stop');
+
+        // 2) 等待旧搜索真正结束（bestmove 回来）后再发新局面
         setTimeout(() => {
           this.lastInfo = { score: null, mate: null, depth: 0, pv: [] };
           this.pending = {
@@ -148,7 +159,7 @@ if (window.__XQ_ENGINE__) {
           this.send('position fen ' + fen);
           if (movetime > 0) this.send('go movetime ' + movetime);
           else this.send('go depth ' + (depth || 20));
-        }, 120);
+        }, 250);
       });
     },
 

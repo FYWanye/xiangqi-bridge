@@ -9,6 +9,10 @@ import {
   uciToMoveCord,
   applyMove,
   cnMoveToUciFull,
+  validateUciMove,
+  normalizeFen,
+  samePosition,
+  fenToBoard,
   START_FEN,
 } from '../src/fen-utils.js';
 
@@ -131,6 +135,74 @@ assertOk('START_FEN 存在', typeof START_FEN === 'string' && START_FEN.includes
 
   const r2 = cnMoveToUciFull(board, '兵七进一', true);
   assert('红: 兵七进一→c3c4', r2, 'c3c4');
+}
+
+// ====== 回归测试: 局面一致性防线 ======
+console.log('\n=== 局面校验测试 (防「上一步着法被套用到新局面上」) ===');
+
+// 测试 9: FEN 归一化与相等判断
+{
+  const a = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1';
+  const b = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w';
+  const c = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR b';
+  assert('归一化只保留棋盘+走棋方', normalizeFen(a), 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w');
+  assertOk('同局面(计数不同)判等', samePosition(a, b) === true);
+  assertOk('走棋方不同判不等', samePosition(a, c) === false);
+}
+
+// 测试 10: fenToBoard 行列解析
+{
+  const board = fenToBoard(START_FEN);
+  assert('红帅在 (row0,col4)', board[0][4], 'K');
+  assert('黑将在 (row9,col4)', board[9][4], 'k');
+  assert('红车在 (row0,col0)', board[0][0], 'R');
+  assert('黑炮在 (row7,col1)', board[7][1], 'c');
+  assertOk('中心为空', board[5][4] === null);
+}
+
+// 测试 11: validateUciMove —— 核心防线
+{
+  // 开局 (红走)
+  const s = START_FEN;
+  assertOk('红炮二平五 h2e2 合法', validateUciMove(s, 'h2e2').ok === true);
+  // 红方回合却走黑子 → 必须拒绝（这正是"优化失败"的根因场景）
+  const badTurn = validateUciMove(s, 'h9g7');
+  assertOk('红方回合走黑马 h9g7 被拒', badTurn.ok === false);
+  assert('拒绝原因: 起点是黑子', badTurn.reason, '该走红方但起点是黑子');
+  // 起点为空
+  assertOk('空起点 e5e6 被拒', validateUciMove(s, 'e5e6').ok === false);
+  // 终点是己方子
+  assertOk('红车吃红马 a0b0 被拒', validateUciMove(s, 'a0b0').ok === false);
+  // 坐标越界
+  assertOk('越界着法被拒', validateUciMove(s, 'z9z9').ok === false);
+
+  // 黑方回合: 红走 h2e2 必须被拒
+  const sBlack = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C2C4/9/RNBAKABNR b';
+  const badRed = validateUciMove(sBlack, 'b2e2');
+  assertOk('黑方回合走红炮 b2e2 被拒', badRed.ok === false);
+  assert('拒绝原因: 该走黑方', badRed.reason, '该走黑方但起点是红子');
+  // 黑马 h9g7 合法
+  assertOk('黑方回合 h9g7 合法', validateUciMove(sBlack, 'h9g7').ok === true);
+}
+
+// 测试 12: 真实失败场景复现（用户日志中的 bug）
+{
+  // 用户日志: 红方回合，却从面板读到"马８进７"→h9g7，落子后局面错乱
+  const redTurnFen = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w';
+  // 1) 中文着法在红方回合转换应失败（红方无 8 路黑马）
+  const asRed = cnMoveToUciFull(redTurnFen.split(' ')[0], '马８进７', true);
+  assertOk('红方回合无法把黑方着法转成 UCI', asRed === null || !validateUciMove(redTurnFen, asRed).ok);
+  // 2) 即便误转成 UCI，归属校验也必须拦下
+  assertOk('h9g7 在红方回合被归属校验拦截', validateUciMove(redTurnFen, 'h9g7').ok === false);
+}
+
+// 测试 13: 局面变化后的着法失效（分析期间棋盘被改动）
+{
+  const before = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w';
+  const after = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C2C4/9/RNBAKABNR b';
+  assertOk('局面已变化被判不等', samePosition(before, after) === false);
+  // 在新局面里，原先合法的 h2e2 起点已空
+  assertOk('旧着法在新局面被拒', validateUciMove(after, 'h2e2').ok === false);
 }
 
 console.log(`\n=== 测试结果: ${passed} 通过, ${failed} 失败 ===`);

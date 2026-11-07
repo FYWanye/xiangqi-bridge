@@ -16,3 +16,9 @@ Thumbs.db
 # playwright browser binaries (installed separately)
 playwright-report/
 test-results/
+
+# build output
+dist/
+build/
+release/
+*.err
