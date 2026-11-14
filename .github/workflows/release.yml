@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建 Windows 免安装版
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建 exe (Node SEA)
+        run: npm run build:exe
+        shell: pwsh
+
+      - name: 打包为 zip
+        shell: pwsh
+        run: |
+          $zip = "XiangqiBridge-windows-x64.zip"
+          if (Test-Path $zip) { Remove-Item $zip }
+          Compress-Archive -Path "dist\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Output "zip 大小: $((Get-Item $zip).Length / 1MB) MB"
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: XiangqiBridge-windows-x64.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
